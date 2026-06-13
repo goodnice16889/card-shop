@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import StorePage from './pages/StorePage.jsx'
 import CheckoutPage from './pages/CheckoutPage.jsx'
 import OrderPage from './pages/OrderPage.jsx'
+import LookupPage from './pages/LookupPage.jsx'
 import AdminLogin from './pages/AdminLogin.jsx'
 import AdminDashboard from './pages/AdminDashboard.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
@@ -12,6 +13,7 @@ export default function App() {
       <Route path="/" element={<StorePage />} />
       <Route path="/checkout/:productId" element={<CheckoutPage />} />
       <Route path="/order/:orderId" element={<OrderPage />} />
+      <Route path="/lookup" element={<LookupPage />} />
       <Route path="/admin/login" element={<AdminLogin />} />
       <Route path="/admin" element={
         <ProtectedRoute>
