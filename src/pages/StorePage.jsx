@@ -10,7 +10,7 @@ export default function StorePage() {
   useEffect(() => {
     supabase
       .from('products')
-      .select('*')
+      .select('*, product_variants(*)')
       .eq('is_active', true)
       .order('created_at', { ascending: false })
       .then(({ data }) => {
@@ -40,6 +40,7 @@ export default function StorePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(6)].map((_, i) => (
               <div key={i} className="card animate-pulse">
+                <div className="h-32 bg-border rounded-xl mb-4" />
                 <div className="h-4 bg-border rounded w-2/3 mb-4" />
                 <div className="h-8 bg-border rounded w-1/3 mb-6" />
                 <div className="h-10 bg-border rounded-full" />
@@ -65,24 +66,56 @@ export default function StorePage() {
 
 function ProductCard({ product, index }) {
   const [stock, setStock] = useState(null)
+  const variants = (product.product_variants || []).filter(v => v.is_active)
+  const hasVariants = variants.length > 0
 
   useEffect(() => {
+    if (hasVariants) return // stock shown per-variant on checkout page
     supabase
       .from('cards')
       .select('id', { count: 'exact', head: true })
       .eq('product_id', product.id)
       .eq('is_sold', false)
+      .is('variant_id', null)
       .then(({ count }) => setStock(count || 0))
   }, [product.id])
 
+  // Price display
+  let priceLabel
+  if (hasVariants) {
+    const prices = variants.map(v => Number(v.price))
+    const min = Math.min(...prices)
+    const max = Math.max(...prices)
+    priceLabel = min === max
+      ? <span className="font-display font-bold text-3xl text-accent">¥{min}</span>
+      : <span className="font-display font-bold text-2xl text-accent">¥{min} - ¥{max}</span>
+  } else {
+    priceLabel = <>
+      <span className="font-display font-bold text-3xl text-accent">¥{product.price}</span>
+      <span className="text-muted text-sm mb-1">/份</span>
+    </>
+  }
+
   return (
     <div
-      className="card group hover:border-accent/40 hover:shadow-lg transition-all duration-300"
+      className="card group hover:border-accent/40 hover:shadow-lg transition-all duration-300 flex flex-col"
       style={{ animationDelay: `${index * 60}ms`, animation: 'fadeUp 0.5s ease forwards', opacity: 0 }}
     >
+      {/* Image */}
+      {product.image_url ? (
+        <div className="-mx-6 -mt-6 mb-4 h-36 overflow-hidden rounded-t-2xl bg-paper">
+          <img src={product.image_url} alt={product.name}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+        </div>
+      ) : (
+        <div className="-mx-6 -mt-6 mb-4 h-36 rounded-t-2xl bg-gradient-to-br from-accent/10 to-paper flex items-center justify-center">
+          <span className="font-display font-bold text-4xl text-accent/30">{product.name?.[0]}</span>
+        </div>
+      )}
+
       {/* Category tag */}
       {product.category && (
-        <span className="tag mb-3 inline-block">{product.category}</span>
+        <span className="tag mb-3 inline-block w-fit">{product.category}</span>
       )}
 
       {/* Name */}
@@ -96,25 +129,30 @@ function ProductCard({ product, index }) {
       )}
 
       {/* Price */}
-      <div className="flex items-end gap-1 mb-5">
-        <span className="font-display font-bold text-3xl text-accent">¥{product.price}</span>
-        <span className="text-muted text-sm mb-1">/份</span>
+      <div className="flex items-end gap-1 mb-5 mt-auto">
+        {priceLabel}
       </div>
 
-      {/* Stock */}
+      {/* Stock / variants info */}
       <div className="flex items-center justify-between mb-4">
-        <span className="text-xs font-mono text-muted">
-          库存：{stock === null ? '...' : stock > 0 ? `${stock} 份` : '售罄'}
-        </span>
-        {stock > 0 && stock <= 10 && (
-          <span className="text-xs font-mono text-orange-500">仅剩 {stock} 份</span>
+        {hasVariants ? (
+          <span className="text-xs font-mono text-muted">{variants.length} 种规格可选</span>
+        ) : (
+          <>
+            <span className="text-xs font-mono text-muted">
+              库存：{stock === null ? '...' : stock > 0 ? `${stock} 份` : '售罄'}
+            </span>
+            {stock > 0 && stock <= 10 && (
+              <span className="text-xs font-mono text-orange-500">仅剩 {stock} 份</span>
+            )}
+          </>
         )}
       </div>
 
       {/* CTA */}
-      {stock === null || stock > 0 ? (
+      {hasVariants || stock === null || stock > 0 ? (
         <Link to={`/checkout/${product.id}`} className="btn-primary w-full justify-center">
-          立即购买
+          {hasVariants ? '选择规格' : '立即购买'}
         </Link>
       ) : (
         <button disabled className="btn-primary w-full justify-center">已售罄</button>
