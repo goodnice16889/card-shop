@@ -44,6 +44,27 @@ export default function AdminDashboard() {
   )
 }
 
+/* ─────────── Image upload helper ─────────── */
+async function uploadImage(file) {
+  if (!file) return null
+  if (file.size > 5 * 1024 * 1024) { toast.error('图片不能超过 5MB'); return null }
+  const ext = file.name.split('.').pop()
+  const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+
+  const { error } = await supabase.storage.from(PRODUCT_IMAGE_BUCKET).upload(path, file, {
+    cacheControl: '3600',
+    upsert: false,
+  })
+
+  if (error) {
+    toast.error('上传失败：' + error.message)
+    return null
+  }
+
+  const { data } = supabase.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(path)
+  return data.publicUrl
+}
+
 /* ─────────── Products Tab ─────────── */
 function ProductsTab() {
   const [products, setProducts] = useState([])
@@ -62,27 +83,10 @@ function ProductsTab() {
   const resetForm = () => setForm({ name: '', description: '', price: '', category: '', is_active: true, image_url: '' })
 
   const handleImageUpload = async (file) => {
-    if (!file) return
-    if (file.size > 5 * 1024 * 1024) { toast.error('图片不能超过 5MB'); return }
     setUploading(true)
-    const ext = file.name.split('.').pop()
-    const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
-
-    const { error } = await supabase.storage.from(PRODUCT_IMAGE_BUCKET).upload(path, file, {
-      cacheControl: '3600',
-      upsert: false,
-    })
-
-    if (error) {
-      toast.error('上传失败：' + error.message)
-      setUploading(false)
-      return
-    }
-
-    const { data } = supabase.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(path)
-    setForm(f => ({ ...f, image_url: data.publicUrl }))
+    const url = await uploadImage(file)
+    if (url) { setForm(f => ({ ...f, image_url: url })); toast.success('图片已上传') }
     setUploading(false)
-    toast.success('图片已上传')
   }
 
   const save = async () => {
@@ -106,7 +110,7 @@ function ProductsTab() {
     load()
   }
 
-  // Fixed delete: verify rows were actually removed (RLS can silently block deletes)
+  // Fixed delete: verify rows were actually removed (RLS / FK can silently block deletes)
   const del = async (id) => {
     if (!confirm('确认删除该商品？关联的卡密和规格也会被删除。')) return
     const { data, error } = await supabase.from('products').delete().eq('id', id).select('id')
@@ -142,7 +146,7 @@ function ProductsTab() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><label className="block text-sm font-body mb-1.5">商品名称 *</label>
               <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div><label className="block text-sm font-body mb-1.5">价格（元）* <span className="text-muted">（有规格时此价格仅作默认展示）</span></label>
+            <div><label className="block text-sm font-body mb-1.5">基础价格（元）* <span className="text-muted">（添加规格后，商店页将显示规格价格区间，此值仅作备用）</span></label>
               <input className="input" type="number" step="0.01" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} /></div>
             <div><label className="block text-sm font-body mb-1.5">分类</label>
               <input className="input" placeholder="如：游戏充值" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} /></div>
@@ -155,7 +159,7 @@ function ProductsTab() {
 
             {/* Image upload */}
             <div className="md:col-span-2">
-              <label className="block text-sm font-body mb-1.5">商品图片</label>
+              <label className="block text-sm font-body mb-1.5">商品主图</label>
               <div className="flex items-center gap-4">
                 {form.image_url ? (
                   <img src={form.image_url} alt="" className="w-20 h-20 rounded-xl object-cover border border-border" />
@@ -246,11 +250,13 @@ function ProductsTab() {
   )
 }
 
-/* ─────────── Variants Panel (二级规格管理) ─────────── */
+/* ─────────── Variants Panel (规格管理，支持图片) ─────────── */
 function VariantsPanel({ product, onChange }) {
   const [variants, setVariants] = useState(product.product_variants || [])
-  const [form, setForm] = useState({ name: '', price: '' })
+  const [form, setForm] = useState({ name: '', price: '', image_url: '' })
   const [adding, setAdding] = useState(false)
+  const [newImgUploading, setNewImgUploading] = useState(false)
+  const [rowUploadingId, setRowUploadingId] = useState(null)
 
   const refresh = async () => {
     const { data } = await supabase.from('product_variants').select('*').eq('product_id', product.id).order('created_at')
@@ -262,11 +268,12 @@ function VariantsPanel({ product, onChange }) {
     if (!form.name || !form.price) { toast.error('请填写规格名称和价格'); return }
     setAdding(true)
     const { error } = await supabase.from('product_variants').insert({
-      product_id: product.id, name: form.name, price: parseFloat(form.price), is_active: true,
+      product_id: product.id, name: form.name, price: parseFloat(form.price),
+      image_url: form.image_url || null, is_active: true,
     })
     setAdding(false)
     if (error) { toast.error('添加失败：' + error.message); return }
-    setForm({ name: '', price: '' })
+    setForm({ name: '', price: '', image_url: '' })
     refresh()
   }
 
@@ -282,20 +289,49 @@ function VariantsPanel({ product, onChange }) {
     refresh()
   }
 
+  // Upload image for new variant (before it's created)
+  const handleNewImage = async (file) => {
+    setNewImgUploading(true)
+    const url = await uploadImage(file)
+    if (url) setForm(f => ({ ...f, image_url: url }))
+    setNewImgUploading(false)
+  }
+
+  // Upload / replace image for an existing variant
+  const handleRowImage = async (variantId, file) => {
+    setRowUploadingId(variantId)
+    const url = await uploadImage(file)
+    if (url) {
+      const { error } = await supabase.from('product_variants').update({ image_url: url }).eq('id', variantId)
+      if (error) { toast.error('保存失败：' + error.message) } else { toast.success('图片已更新'); refresh() }
+    }
+    setRowUploadingId(null)
+  }
+
   return (
     <div>
-      <h4 className="font-display font-semibold mb-3">{product.name} · 规格管理（二级商品）</h4>
-      <p className="text-xs text-muted mb-3">添加多个规格后，用户在购买前需要先选择规格；每个规格的库存和卡密需要在「卡密管理」中分别导入。</p>
+      <h4 className="font-display font-semibold mb-3">{product.name} · 规格管理</h4>
+      <p className="text-xs text-muted mb-3">添加多个规格后，用户在购买页可以直接选择规格（价格、图片各自独立）；每个规格的卡密需要在「卡密管理」中分别导入。</p>
 
       {variants.length > 0 && (
         <div className="space-y-2 mb-4">
           {variants.map(v => (
             <div key={v.id} className="flex items-center justify-between bg-white border border-border rounded-xl px-4 py-2">
               <div className="flex items-center gap-3">
+                {v.image_url ? (
+                  <img src={v.image_url} alt="" className="w-10 h-10 rounded-lg object-cover" />
+                ) : (
+                  <div className="w-10 h-10 rounded-lg bg-paper border border-dashed border-border flex items-center justify-center text-xs text-muted">无</div>
+                )}
                 <span className="font-body text-sm font-medium">{v.name}</span>
                 <span className="font-mono text-sm text-accent">¥{v.price}</span>
               </div>
               <div className="flex items-center gap-2">
+                <input type="file" accept="image/*" id={`variant-img-${v.id}`} className="hidden"
+                  onChange={e => handleRowImage(v.id, e.target.files?.[0])} />
+                <label htmlFor={`variant-img-${v.id}`} className="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-ink hover:text-paper transition-all cursor-pointer">
+                  {rowUploadingId === v.id ? '上传中...' : v.image_url ? '换图' : '上传图片'}
+                </label>
                 <button onClick={() => toggleVariant(v.id, v.is_active)}
                   className={`text-xs px-2 py-0.5 rounded-full border font-body
                     ${v.is_active ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
@@ -309,14 +345,21 @@ function VariantsPanel({ product, onChange }) {
         </div>
       )}
 
-      <div className="flex gap-2 items-end">
-        <div className="flex-1">
+      <div className="flex gap-2 items-end flex-wrap">
+        <div className="flex-1 min-w-[160px]">
           <label className="block text-xs font-body mb-1 text-muted">规格名称</label>
-          <input className="input" placeholder="如：1个月会员" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+          <input className="input" placeholder="如：1美元 / 1个月会员" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
         </div>
         <div className="w-32">
           <label className="block text-xs font-body mb-1 text-muted">价格（元）</label>
           <input className="input" type="number" step="0.01" placeholder="0.00" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} />
+        </div>
+        <div>
+          <label className="block text-xs font-body mb-1 text-muted">图片（可选）</label>
+          <input type="file" accept="image/*" id="new-variant-img" className="hidden" onChange={e => handleNewImage(e.target.files?.[0])} />
+          <label htmlFor="new-variant-img" className="btn-ghost text-sm py-3 px-4 cursor-pointer block">
+            {newImgUploading ? '上传中...' : form.image_url ? '已选图片 ✓' : '上传图片'}
+          </label>
         </div>
         <button className="btn-primary shrink-0" onClick={addVariant} disabled={adding}>添加规格</button>
       </div>
@@ -353,6 +396,7 @@ function CardsTab() {
     let query = supabase.from('cards').select('*').eq('product_id', selProduct).order('created_at', { ascending: false })
     if (variants.length > 0) {
       if (selVariant) query = query.eq('variant_id', selVariant)
+      else return setCards([])
     } else {
       query = query.is('variant_id', null)
     }
@@ -400,26 +444,28 @@ function CardsTab() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-display font-bold text-2xl">卡密管理</h2>
-        {selProduct && (
+        {selProduct && (variants.length === 0 || selVariant) && (
           <span className="text-sm font-body text-muted">可用：<strong className="text-green-600">{available}</strong> / 共 {cards.length}</span>
         )}
       </div>
 
       {/* Product & variant selector */}
-      <div className="mb-6 flex gap-4 flex-wrap">
+      <div className="mb-6 flex gap-4 flex-wrap items-end">
         <div>
           <label className="block text-sm font-body mb-1.5">选择商品</label>
           <select className="input max-w-xs" value={selProduct} onChange={e => setSelProduct(e.target.value)}>
-            {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {products.map(p => <option key={p.id} value={p.id}>{p.name}{(p.product_variants || []).length > 0 ? `（${p.product_variants.length} 种规格）` : ''}</option>)}
           </select>
         </div>
-        {variants.length > 0 && (
+        {variants.length > 0 ? (
           <div>
             <label className="block text-sm font-body mb-1.5">选择规格 <span className="text-accent">*</span></label>
             <select className="input max-w-xs" value={selVariant} onChange={e => setSelVariant(e.target.value)}>
               {variants.map(v => <option key={v.id} value={v.id}>{v.name}（¥{v.price}）</option>)}
             </select>
           </div>
+        ) : (
+          <p className="text-xs text-muted pb-3">该商品没有规格，卡密将作为默认库存导入</p>
         )}
       </div>
 
@@ -428,12 +474,12 @@ function CardsTab() {
         <h3 className="font-display font-semibold mb-3">批量导入卡密</h3>
         <p className="text-muted text-sm font-body mb-3">每行一条，格式：<code className="font-mono bg-paper px-1 rounded">卡号</code> 或 <code className="font-mono bg-paper px-1 rounded">卡号,卡密</code></p>
         {variants.length > 0 && (
-          <p className="text-xs text-accent mb-3">⚠️ 当前导入将绑定到规格「{variants.find(v => v.id === selVariant)?.name}」</p>
+          <p className="text-xs text-accent mb-3">⚠️ 当前导入将绑定到规格「{variants.find(v => v.id === selVariant)?.name}」，请确认规格选择正确</p>
         )}
         <textarea className="input resize-none font-mono text-sm mb-3" rows={5}
           placeholder={"ABCD-1234-EFGH\nXXXX-5678,password123"}
           value={bulkText} onChange={e => setBulkText(e.target.value)} />
-        <button className="btn-primary" onClick={importCards} disabled={importing || !selProduct}>
+        <button className="btn-primary" onClick={importCards} disabled={importing || !selProduct || (variants.length > 0 && !selVariant)}>
           {importing ? '导入中...' : '导入卡密'}
         </button>
       </div>
