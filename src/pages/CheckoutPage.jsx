@@ -157,7 +157,7 @@ export default function CheckoutPage() {
             <label className="block text-sm font-body font-medium mb-2">接收邮箱 <span className="text-accent">*</span></label>
             <input className="input" type="email" placeholder="your@email.com" value={email}
               onChange={e => setEmail(e.target.value)} />
-            <p className="text-xs text-muted mt-1.5">卡密将发送到此邮箱（备用），页面也会直接显示</p>
+            <p className="text-xs text-muted mt-1.5">支付成功后卡密会立即显示在本页面；如不慎刷新或关闭，可凭此邮箱在「查询订单」中找回</p>
           </div>
 
           {/* Quantity */}
