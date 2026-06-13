@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase, PRODUCT_IMAGE_BUCKET } from '../lib/supabase'
 import toast from 'react-hot-toast'
 
-const TABS = ['商品管理', '卡密管理', '订单管理']
+const TABS = ['商品管理', '卡密管理', '订单管理', '设置']
 
 export default function AdminDashboard() {
   const [tab, setTab] = useState(0)
@@ -39,6 +39,7 @@ export default function AdminDashboard() {
         {tab === 0 && <ProductsTab />}
         {tab === 1 && <CardsTab />}
         {tab === 2 && <OrdersTab />}
+        {tab === 3 && <SettingsTab />}
       </div>
     </div>
   )
@@ -515,6 +516,46 @@ function CardsTab() {
           </tbody>
         </table>
         {cards.length === 0 && <p className="text-center text-muted py-8 font-body">暂无卡密，请先导入</p>}
+      </div>
+    </div>
+  )
+}
+
+/* ─────────── Settings Tab ─────────── */
+function SettingsTab() {
+  const [contact, setContact] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    supabase.from('settings').select('contact_info').eq('id', 1).single()
+      .then(({ data }) => { setContact(data?.contact_info || ''); setLoading(false) })
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    const { error } = await supabase.from('settings')
+      .upsert({ id: 1, contact_info: contact, updated_at: new Date().toISOString() })
+    setSaving(false)
+    if (error) { toast.error('保存失败：' + error.message); return }
+    toast.success('已保存')
+  }
+
+  return (
+    <div>
+      <h2 className="font-display font-bold text-2xl mb-6">设置</h2>
+      <div className="card max-w-xl">
+        <label className="block text-sm font-body font-medium mb-2">客服联系方式</label>
+        <p className="text-xs text-muted mb-3">显示在网站顶部导航栏，方便买家联系你。留空则不显示。</p>
+        {loading ? (
+          <div className="h-12 bg-paper rounded-xl animate-pulse" />
+        ) : (
+          <input className="input" placeholder="如：QQ 123456789 / 微信 abc123"
+            value={contact} onChange={e => setContact(e.target.value)} />
+        )}
+        <button className="btn-primary mt-4" onClick={save} disabled={saving || loading}>
+          {saving ? '保存中...' : '保存'}
+        </button>
       </div>
     </div>
   )
