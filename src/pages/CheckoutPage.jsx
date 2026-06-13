@@ -8,34 +8,63 @@ export default function CheckoutPage() {
   const { productId } = useParams()
   const navigate = useNavigate()
   const [product, setProduct] = useState(null)
+  const [variants, setVariants] = useState([])
+  const [selectedVariant, setSelectedVariant] = useState(null) // null = no-variant product
   const [email, setEmail] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [payType, setPayType] = useState('alipay')
   const [loading, setLoading] = useState(false)
   const [stock, setStock] = useState(0)
 
+  // Load product + variants
   useEffect(() => {
-    supabase.from('products').select('*').eq('id', productId).single()
+    supabase.from('products').select('*, product_variants(*)').eq('id', productId).single()
       .then(({ data }) => {
         if (!data || !data.is_active) { navigate('/'); return }
         setProduct(data)
+        const active = (data.product_variants || []).filter(v => v.is_active)
+        setVariants(active)
+        if (active.length > 0) setSelectedVariant(active[0])
       })
-    supabase.from('cards').select('id', { count: 'exact', head: true })
-      .eq('product_id', productId).eq('is_sold', false)
-      .then(({ count }) => setStock(count || 0))
   }, [productId])
+
+  // Load stock whenever variant changes
+  useEffect(() => {
+    if (!product) return
+    let query = supabase.from('cards').select('id', { count: 'exact', head: true })
+      .eq('product_id', productId).eq('is_sold', false)
+
+    if (variants.length > 0) {
+      if (!selectedVariant) return
+      query = query.eq('variant_id', selectedVariant.id)
+    } else {
+      query = query.is('variant_id', null)
+    }
+
+    query.then(({ count }) => {
+      setStock(count || 0)
+      setQuantity(1)
+    })
+  }, [product, selectedVariant])
+
+  const price = selectedVariant ? Number(selectedVariant.price) : Number(product?.price || 0)
+  const displayName = selectedVariant ? `${product?.name} - ${selectedVariant.name}` : product?.name
+  // Variant image takes priority over the product's main image
+  const displayImage = selectedVariant?.image_url || product?.image_url
 
   const handleSubmit = async () => {
     if (!email || !email.includes('@')) { toast.error('请输入有效邮箱'); return }
     if (quantity > stock) { toast.error('库存不足'); return }
+    if (variants.length > 0 && !selectedVariant) { toast.error('请选择规格'); return }
     setLoading(true)
 
     // 1. Create order in Supabase
     const { data: order, error } = await supabase.from('orders').insert({
       product_id: productId,
+      variant_id: selectedVariant ? selectedVariant.id : null,
       email,
       quantity,
-      amount: (product.price * quantity).toFixed(2),
+      amount: (price * quantity).toFixed(2),
       status: 'pending',
     }).select().single()
 
@@ -48,7 +77,7 @@ export default function CheckoutPage() {
       body: JSON.stringify({
         orderId: order.id,
         amount: order.amount,
-        name: product.name,
+        name: displayName,
         payType,
       }),
     })
@@ -66,7 +95,7 @@ export default function CheckoutPage() {
     </div>
   )
 
-  const total = (product.price * quantity).toFixed(2)
+  const total = (price * quantity).toFixed(2)
 
   return (
     <div className="min-h-screen bg-paper">
@@ -80,17 +109,49 @@ export default function CheckoutPage() {
 
         {/* Product summary */}
         <div className="card mb-6">
-          <div className="flex justify-between items-start">
-            <div>
+          <div className="flex gap-4 items-start">
+            {displayImage && (
+              <img src={displayImage} alt={product.name} className="w-16 h-16 rounded-xl object-cover shrink-0" />
+            )}
+            <div className="flex-1">
               <p className="font-display font-semibold text-lg">{product.name}</p>
+              {selectedVariant && (
+                <p className="text-accent text-sm font-body mt-0.5">{selectedVariant.name}</p>
+              )}
               {product.description && <p className="text-muted text-sm mt-1">{product.description}</p>}
             </div>
-            <span className="font-display font-bold text-accent text-xl">¥{product.price}</span>
+            <span className="font-display font-bold text-accent text-xl shrink-0">¥{price}</span>
           </div>
         </div>
 
         {/* Form */}
         <div className="card space-y-5">
+
+          {/* Variant selector */}
+          {variants.length > 0 && (
+            <div>
+              <label className="block text-sm font-body font-medium mb-2">选择规格 <span className="text-accent">*</span></label>
+              <div className="grid grid-cols-2 gap-3">
+                {variants.map(v => (
+                  <button key={v.id}
+                    onClick={() => setSelectedVariant(v)}
+                    className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all font-body text-sm text-left
+                      ${selectedVariant?.id === v.id ? 'border-accent bg-accent/5' : 'border-border hover:border-muted'}`}>
+                    {v.image_url ? (
+                      <img src={v.image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-paper border border-border flex items-center justify-center text-xs text-muted shrink-0">无</div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate">{v.name}</p>
+                      <p className="font-display font-semibold text-accent">¥{v.price}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Email */}
           <div>
             <label className="block text-sm font-body font-medium mb-2">接收邮箱 <span className="text-accent">*</span></label>
@@ -136,13 +197,14 @@ export default function CheckoutPage() {
             <span className="font-display font-bold text-2xl text-accent">¥{total}</span>
           </div>
 
-          <button className="btn-primary w-full justify-center text-base py-4" onClick={handleSubmit} disabled={loading}>
+          <button className="btn-primary w-full justify-center text-base py-4" onClick={handleSubmit}
+            disabled={loading || stock === 0 || (variants.length > 0 && !selectedVariant)}>
             {loading ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 跳转支付中...
               </span>
-            ) : `确认支付 ¥${total}`}
+            ) : stock === 0 ? '已售罄' : `确认支付 ¥${total}`}
           </button>
         </div>
       </div>
