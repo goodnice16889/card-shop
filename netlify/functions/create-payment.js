@@ -1,5 +1,5 @@
 // netlify/functions/create-payment.js
-// 调用 YPay 发起支付，返回跳转链接
+// 调用易支付协议接口（码支付 mzf3.mapay.cc），生成跳转链接
 import crypto from 'crypto'
 
 export const handler = async (event) => {
@@ -9,16 +9,13 @@ export const handler = async (event) => {
 
   const pid    = process.env.YPAY_PID
   const key    = process.env.YPAY_KEY
-  // 默认官方节点，自建节点改成对应域名（不加斜杠）
-  const apiUrl = process.env.YPAY_API_URL || 'https://ypay.yvdian.cn'
-  const siteUrl = process.env.URL || 'http://localhost:5173' // Netlify 自动注入
+  const apiUrl = process.env.YPAY_API_URL // 例如 https://mzf3.mapay.cc
+  const siteUrl = process.env.URL || 'http://localhost:5173'
 
-  if (!pid || !key) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'YPay 配置缺失，请检查环境变量 YPAY_PID / YPAY_KEY' }) }
+  if (!pid || !key || !apiUrl) {
+    return { statusCode: 500, body: JSON.stringify({ error: '支付配置缺失，请检查 YPAY_PID / YPAY_KEY / YPAY_API_URL 环境变量' }) }
   }
 
-  // YPay 参数（与标准易支付规范一致）
-  // sign、sign_type 不参与签名，空值不参与签名
   const params = {
     money:        parseFloat(amount).toFixed(2),
     name:         name,
@@ -27,10 +24,9 @@ export const handler = async (event) => {
     pid:          String(pid),
     return_url:   `${siteUrl}/order/${orderId}`,
     sitename:     '卡密商店',
-    type:         payType, // 'alipay' | 'wxpay' | 'qqpay'
+    type:         payType,
   }
 
-  // 签名：参数按 key ASCII 升序排列，拼接后追加 key，MD5 小写
   const signStr = Object.keys(params)
     .filter(k => params[k] !== '' && params[k] != null)
     .sort()
@@ -39,9 +35,10 @@ export const handler = async (event) => {
 
   const sign = crypto.createHash('md5').update(signStr, 'utf8').digest('hex')
 
-  // 拼接跳转 URL（YPay 页面支付入口）
+  // 去掉 API 地址结尾的斜杠，避免出现 // 双斜杠
+  const base = apiUrl.replace(/\/+$/, '')
   const query = new URLSearchParams({ ...params, sign, sign_type: 'MD5' }).toString()
-  const payUrl = `${apiUrl}/pay/apisubmit?${query}`
+  const payUrl = `${base}/submit.php?${query}`
 
   return {
     statusCode: 200,
