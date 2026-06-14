@@ -1,13 +1,13 @@
 // netlify/functions/payment-notify.js
-// 彩虹易支付回调：验签 → 更新订单状态 → 分配卡密
+// 易支付协议回调：验签 → 更新订单状态 → 按商品/规格分配卡密
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 
 export const handler = async (event) => {
   const params = event.queryStringParameters || {}
   const key = process.env.YPAY_KEY
-  const supabaseUrl = process.env.SUPABASE_URL       // 注意：无 VITE_ 前缀（服务端用）
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY // Service Role Key
+  const supabaseUrl = process.env.SUPABASE_URL
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY
 
   if (!key || !supabaseUrl || !supabaseServiceKey) {
     return { statusCode: 500, body: 'Config missing' }
@@ -39,14 +39,20 @@ export const handler = async (event) => {
     return { statusCode: 200, body: 'success' }
   }
 
-  // 4. Allocate cards
-  const { data: availableCards } = await supabase.from('cards')
-    .select('id').eq('product_id', order.product_id).eq('is_sold', false)
-    .limit(order.quantity)
+  // 4. Allocate cards (matching product + variant)
+  let cardQuery = supabase.from('cards').select('id')
+    .eq('product_id', order.product_id).eq('is_sold', false)
+
+  if (order.variant_id) {
+    cardQuery = cardQuery.eq('variant_id', order.variant_id)
+  } else {
+    cardQuery = cardQuery.is('variant_id', null)
+  }
+
+  const { data: availableCards } = await cardQuery.limit(order.quantity)
 
   if (!availableCards || availableCards.length < order.quantity) {
     console.error('Not enough cards for order', orderId)
-    // Still mark as paid so admin can handle manually
   }
 
   const cardIds = (availableCards || []).map(c => c.id)
